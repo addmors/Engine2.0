@@ -4,6 +4,7 @@
 #include <string>
 #include <utility>
 
+#include "engine/core/Input.hpp"
 #include "engine/core/Log.hpp"
 
 namespace engine {
@@ -41,9 +42,58 @@ Window::Window(const WindowDesc& desc)
 
     glfwMakeContextCurrent(m_window);
     glfwSwapInterval(1); // vsync, same as the 2017 build
+    glfwSetWindowUserPointer(m_window, this);
 
     Log::info("window created: {}x{}, OpenGL {}.{} core",
         desc.width, desc.height, desc.glMajor, desc.glMinor);
+}
+
+void Window::setInputListener(Input* input)
+{
+    m_input = input;
+    if (m_input != nullptr) {
+        glfwSetKeyCallback(m_window, keyCallback);
+        glfwSetCursorPosCallback(m_window, cursorPosCallback);
+        glfwSetMouseButtonCallback(m_window, mouseButtonCallback);
+        glfwSetScrollCallback(m_window, scrollCallback);
+    } else {
+        glfwSetKeyCallback(m_window, nullptr);
+        glfwSetCursorPosCallback(m_window, nullptr);
+        glfwSetMouseButtonCallback(m_window, nullptr);
+        glfwSetScrollCallback(m_window, nullptr);
+    }
+}
+
+void Window::keyCallback(GLFWwindow* window, int key, int /*scancode*/, int action, int /*mods*/)
+{
+    auto* self = static_cast<Window*>(glfwGetWindowUserPointer(window));
+    if (self != nullptr && self->m_input != nullptr) {
+        self->m_input->onKey(key, action);
+    }
+}
+
+void Window::cursorPosCallback(GLFWwindow* window, double xpos, double ypos)
+{
+    auto* self = static_cast<Window*>(glfwGetWindowUserPointer(window));
+    if (self != nullptr && self->m_input != nullptr) {
+        self->m_input->onMouseMove(xpos, ypos);
+    }
+}
+
+void Window::mouseButtonCallback(GLFWwindow* window, int button, int action, int /*mods*/)
+{
+    auto* self = static_cast<Window*>(glfwGetWindowUserPointer(window));
+    if (self != nullptr && self->m_input != nullptr) {
+        self->m_input->onMouseButton(button, action);
+    }
+}
+
+void Window::scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
+{
+    auto* self = static_cast<Window*>(glfwGetWindowUserPointer(window));
+    if (self != nullptr && self->m_input != nullptr) {
+        self->m_input->onScroll(xoffset, yoffset);
+    }
 }
 
 Window::~Window()

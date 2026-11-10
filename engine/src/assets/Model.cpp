@@ -8,6 +8,7 @@
 #include <utility>
 
 #include <assimp/Importer.hpp>
+#include <assimp/material.h>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
 
@@ -75,10 +76,12 @@ std::expected<Model, AssetError> Model::loadFromFile(std::string_view path)
     }
 
     Model model;
+    model.m_sourceDir = fs::path{path}.parent_path().generic_string();
     model.m_root = processNode(*scene->mRootNode, *scene, model);
     for (auto& mesh : model.m_meshes) {
         mesh.computeAabb();
     }
+    model.readMaterials(*scene);
     model.readAnimations(*scene);
 
     Log::info("model '{}' loaded: {} meshes, {} bones, {} animations",
@@ -172,6 +175,35 @@ Mesh Model::processMesh(const aiMesh& mesh, const aiScene& /*scene*/, Model& mod
     }
 
     return out;
+}
+
+void Model::readMaterials(const aiScene& scene)
+{
+    m_materials.reserve(scene.mNumMaterials);
+    for (unsigned i = 0; i < scene.mNumMaterials; ++i) {
+        const aiMaterial& material = *scene.mMaterials[i];
+
+        const auto pickTexture = [&material](aiTextureType type) {
+            aiString path;
+            if (material.GetTexture(type, 0, &path) == aiReturn_SUCCESS) {
+                std::string value = path.C_Str();
+                // Drop URI/relative prefixes that collada/fbx sometimes carry.
+                const size_t scheme = value.find("://");
+                if (scheme != std::string::npos) {
+                    value = value.substr(scheme + 3);
+                }
+                return std::filesystem::path{value}.generic_string();
+            }
+            return std::string{};
+        };
+
+        Material out;
+        out.name = material.GetName().C_Str();
+        out.diffuse = pickTexture(aiTextureType_DIFFUSE);
+        out.normal = pickTexture(aiTextureType_NORMALS);
+        out.specular = pickTexture(aiTextureType_SPECULAR);
+        m_materials.push_back(std::move(out));
+    }
 }
 
 void Model::readAnimations(const aiScene& scene)

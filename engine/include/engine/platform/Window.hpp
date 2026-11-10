@@ -7,6 +7,8 @@
 
 namespace engine {
 
+class Input;
+
 struct WindowDesc {
     int width = 1920;
     int height = 1080;
@@ -36,13 +38,22 @@ public:
 
     void swapBuffers() const;
 
+    // Installs GLFW key/mouse/scroll callbacks feeding the given Input tracker.
+    void setInputListener(Input* input);
+
     [[nodiscard]] bool keyPressed(int key) const;
     [[nodiscard]] std::pair<int, int> framebufferSize() const;
 
     [[nodiscard]] GLFWwindow* handle() const { return m_window; }
 
 private:
+    static void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
+    static void cursorPosCallback(GLFWwindow* window, double xpos, double ypos);
+    static void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
+    static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset);
+
     GLFWwindow* m_window = nullptr;
+    Input* m_input = nullptr;
 };
 
 } // namespace engine

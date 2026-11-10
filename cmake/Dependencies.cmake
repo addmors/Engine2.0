@@ -4,6 +4,11 @@
 
 include(FetchContent)
 
+# CMake 4.x removed compatibility with cmake_minimum_required(VERSION <3.5);
+# legacy third-party projects (bullet3 3.25) still declare those. This opt-in
+# keeps them configurable.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "Minimum policy version for legacy subprojects" FORCE)
+
 # --- GLFW: window + input ---------------------------------------------------
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -55,6 +60,32 @@ target_include_directories(imgui PUBLIC
     ${imgui_SOURCE_DIR}/backends
 )
 target_link_libraries(imgui PUBLIC glfw)
+
+# --- stb: image loading (stb_image) ----------------------------------------------
+# stb has no CMakeLists at its root -> populated only, we declare an INTERFACE target.
+FetchContent_Declare(stb
+    GIT_REPOSITORY https://github.com/nothings/stb.git
+    GIT_TAG        4e9b368bfc071e97206ea5c6adba68dd0cbf8897
+)
+FetchContent_MakeAvailable(stb)
+
+add_library(stb INTERFACE)
+target_include_directories(stb INTERFACE ${stb_SOURCE_DIR})
+
+# --- Bullet Physics: dynamics + character controller ------------------------------
+# Static build, no demos/extras/tests.
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(BUILD_BULLET2_DEMOS OFF CACHE BOOL "" FORCE)
+set(BUILD_BULLET3 OFF CACHE BOOL "" FORCE)
+set(BUILD_CPU_DEMOS OFF CACHE BOOL "" FORCE)
+set(BUILD_EXTRAS OFF CACHE BOOL "" FORCE)
+set(BUILD_UNIT_TESTS OFF CACHE BOOL "" FORCE)
+set(INSTALL_LIBS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(bullet3
+    GIT_REPOSITORY https://github.com/bulletphysics/bullet3.git
+    GIT_TAG        3.25
+)
+FetchContent_MakeAvailable(bullet3)
 
 # --- Assimp: model/animation import ---------------------------------------------
 # Static build, importer only (no exporters), no tools/tests.

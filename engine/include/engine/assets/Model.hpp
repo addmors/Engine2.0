@@ -36,6 +36,14 @@ struct BoneInfo {
 // GPU resources are created later by the renderer (RHI, M2).
 class Model final {
 public:
+    // Texture references of one material (paths relative to the model file).
+    struct Material {
+        std::string name;
+        std::string diffuse;
+        std::string normal;
+        std::string specular;
+    };
+
     // Parses the file; reports failures via std::expected instead of exceptions.
     [[nodiscard]] static std::expected<Model, AssetError> loadFromFile(std::string_view path);
 
@@ -46,17 +54,22 @@ public:
     [[nodiscard]] const std::vector<Mesh>& meshes() const { return m_meshes; }
     [[nodiscard]] const std::vector<Animation>& animations() const { return m_animations; }
     [[nodiscard]] const std::unordered_map<std::string, BoneInfo>& bones() const { return m_bones; }
+    [[nodiscard]] const std::vector<Material>& materials() const { return m_materials; }
     [[nodiscard]] int boneCount() const { return m_boneCount; }
+    [[nodiscard]] const std::string& sourceDirectory() const { return m_sourceDir; }
 
 private:
     static ModelNode processNode(const aiNode& node, const aiScene& scene, Model& model);
     [[nodiscard]] static Mesh processMesh(const aiMesh& mesh, const aiScene& scene, Model& model);
     void readAnimations(const aiScene& scene);
+    void readMaterials(const aiScene& scene);
 
     std::vector<Mesh> m_meshes;
     std::vector<Animation> m_animations;
+    std::vector<Material> m_materials;
     std::unordered_map<std::string, BoneInfo> m_bones;
     ModelNode m_root;
+    std::string m_sourceDir;
     int m_boneCount = 0;
 };
 
