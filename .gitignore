@@ -1,0 +1,24 @@
+# Build
+build/
+out/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# OS
+Thumbs.db
+Desktop.ini
+
+# Compiler artifacts (binaries live in build/, never in the source tree)
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.idb
+*.exe
+*.dll
+*.lib
