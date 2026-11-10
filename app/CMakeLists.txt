@@ -13,3 +13,8 @@ target_link_libraries(candy PRIVATE
 set_target_properties(candy PROPERTIES
     VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
+
+# Baked-in path to the asset folder for selftests and tooling.
+target_compile_definitions(candy PRIVATE
+    CANDY_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets"
+)

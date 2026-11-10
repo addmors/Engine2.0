@@ -22,3 +22,6 @@ Desktop.ini
 *.exe
 *.dll
 *.lib
+
+# ImGui window layout (user-local state)
+imgui.ini

@@ -5,6 +5,7 @@ add_library(engine STATIC
     src/core/Log.cpp
     src/platform/Window.cpp
     src/ui/Ui.cpp
+    src/assets/Model.cpp
 )
 
 target_include_directories(engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -21,5 +22,8 @@ target_link_libraries(engine PUBLIC
     spdlog::spdlog
     glm::glm
 )
+
+# assimp headers are not exposed in engine's public interface -> PRIVATE.
+target_link_libraries(engine PRIVATE assimp::assimp)
 
 target_link_libraries(engine PUBLIC candy_warnings)
