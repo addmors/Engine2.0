@@ -351,4 +351,21 @@ void PlayerController::teleport(glm::vec3 position)
     m_ghost.setWorldTransform(transform);
 }
 
+void PlayerController::setEnabled(bool enabled)
+{
+    if (enabled == m_enabled) {
+        return;
+    }
+    m_enabled = enabled;
+    if (enabled) {
+        // The ghost never left the world — only the action is re-registered.
+        m_world.world()->addAction(m_controller.get());
+    } else {
+        // Drop any queued walk direction so the capsule cannot drift away the
+        // moment it is re-enabled.
+        m_controller->setWalkDirection(btVector3(0.0F, 0.0F, 0.0F));
+        m_world.world()->removeAction(m_controller.get());
+    }
+}
+
 } // namespace engine

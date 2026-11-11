@@ -69,6 +69,14 @@ public:
     [[nodiscard]] float halfHeight() const;
     void teleport(glm::vec3 position);
 
+    // Parks the character controller (ragdoll mode): removes the controller's
+    // action from the physics world so it stops stepping the capsule
+    // (gravity + residual walk direction) while the avatar is simulated by
+    // the ragdoll instead. The ghost object stays registered — position()
+    // keeps working and the world stays consistent; setEnabled(true) re-adds
+    // the action (same registration as the constructor).
+    void setEnabled(bool enabled);
+
     float walkSpeed = 8.0F;
     float jumpSpeed = 7.0F; // with the controller's -30 gravity this is a ~0.8 high jump
 
@@ -78,6 +86,7 @@ private:
     CapsuleFit m_fit; // fitted capsule dimensions (initializes m_capsule)
     btCapsuleShape m_capsule;
     std::unique_ptr<btKinematicCharacterController> m_controller;
+    bool m_enabled = true;
 };
 
 } // namespace engine

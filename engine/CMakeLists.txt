@@ -14,6 +14,7 @@ add_library(engine STATIC
     src/scene/Primitives.cpp
     src/physics/PhysicsWorld.cpp
     src/physics/PlayerController.cpp
+    src/physics/Ragdoll.cpp
     src/renderers/gl/GlShader.cpp
     src/renderers/gl/GlTexture.cpp
     src/renderers/gl/GlMesh.cpp

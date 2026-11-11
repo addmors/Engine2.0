@@ -2,6 +2,7 @@
 
 #include <span>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -52,6 +53,28 @@ public:
     // keep the planted foot exactly on the ground. Uses CPU skinning with the
     // same palette math as the GPU and does not disturb the live pose.
     [[nodiscard]] float clipLowestPoint(size_t clipIndex, int samples = 24) const;
+
+    // ---- External pose driving (ragdoll) -----------------------------------
+    // The ragdoll replaces clip sampling with simulated body transforms:
+    // snapshotPose() freezes the current node-local pose (the ragdoll seeds
+    // its bodies from it and keeps non-physical bones — neck, shoulders,
+    // fingers — posed); overridePose() installs an externally built pose and
+    // rebuilds the palette through the same composePalette path as update().
+    [[nodiscard]] std::vector<Trs> snapshotPose() const { return m_currentPose.nodeTransforms; }
+    void overridePose(const std::vector<Trs>& nodeTransforms);
+
+    // Flat-node queries for external pose drivers. Globals live in the
+    // assimp-wrapped model space composePalette works in (NOT the centimeter
+    // space of the palette — see composePalette for the S(100) compensation).
+    [[nodiscard]] int nodeCount() const { return static_cast<int>(m_nodes.size()); }
+    [[nodiscard]] int nodeParentIndex(int nodeIndex) const;
+    [[nodiscard]] int nodeIndexForBone(std::string_view name) const;
+    [[nodiscard]] glm::mat4 nodeGlobalTransform(int nodeIndex) const;
+
+    // Pure-TRS matrix -> position/rotation/scale (assimp node transforms are
+    // TRS). A member so the ragdoll's body -> node back-conversion shares the
+    // exact same decomposition as the pose pipeline.
+    [[nodiscard]] static Trs decomposeTrs(const glm::mat4& matrix);
 
 private:
     // Flattened model node tree: parents always precede children.

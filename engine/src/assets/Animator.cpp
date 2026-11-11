@@ -58,8 +58,9 @@ glm::quat interpolateQuat(const std::vector<RotationKey>& keys, float tick)
     return keys.back().value;
 }
 
-// Decomposes a pure TRS matrix (assimp node transforms are TRS).
-Trs decomposeTrs(const glm::mat4& m)
+// Decomposes a pure TRS matrix (assimp node transforms are TRS). Member so
+// the ragdoll's body -> node back-conversion shares this exact code path.
+Animator::Trs Animator::decomposeTrs(const glm::mat4& m)
 {
     Trs out;
     out.translation = glm::vec3{m[3]};
@@ -339,6 +340,44 @@ float Animator::normalizedTime() const
     const Animation& clip = m_model.animations()[m_currentClip];
     const float seconds = clip.duration / (clip.ticksPerSecond > 0.0F ? clip.ticksPerSecond : 25.0F);
     return seconds > 0.0F ? std::fmod(m_time, seconds) / seconds : 0.0F;
+}
+
+void Animator::overridePose(const std::vector<Trs>& nodeTransforms)
+{
+    if (nodeTransforms.size() != m_nodes.size()) {
+        Log::warn("overridePose: {} transforms for {} flat nodes — ignored",
+            nodeTransforms.size(), m_nodes.size());
+        return;
+    }
+    m_fadingFrom = nullptr; // an external pose replaces any pending fade
+    m_currentPose.nodeTransforms = nodeTransforms;
+    composePalette(m_currentPose);
+}
+
+int Animator::nodeIndexForBone(std::string_view name) const
+{
+    for (size_t i = 0; i < m_nodes.size(); ++i) {
+        if (m_nodes[i].name == name) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+int Animator::nodeParentIndex(int nodeIndex) const
+{
+    if (nodeIndex < 0 || nodeIndex >= static_cast<int>(m_nodes.size())) {
+        return -1;
+    }
+    return m_nodes[static_cast<size_t>(nodeIndex)].parentIndex;
+}
+
+glm::mat4 Animator::nodeGlobalTransform(int nodeIndex) const
+{
+    if (nodeIndex < 0 || nodeIndex >= static_cast<int>(m_globals.size())) {
+        return glm::mat4{1.0F}; // never updated yet / out of range
+    }
+    return m_globals[static_cast<size_t>(nodeIndex)];
 }
 
 } // namespace engine

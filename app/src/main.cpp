@@ -17,6 +17,7 @@
 #include <engine/platform/Window.hpp>
 #include <engine/physics/PhysicsWorld.hpp>
 #include <engine/physics/PlayerController.hpp>
+#include <engine/physics/Ragdoll.hpp>
 #include <engine/renderers/gl/GlRenderer.hpp>
 #include <engine/scene/Camera.hpp>
 #include <engine/scene/Entity.hpp>
@@ -115,7 +116,8 @@ glm::mat4 shapeInstanceScale(engine::PhysicsBodyDesc::Shape shape, const glm::ve
     return glm::mat4{1.0F};
 }
 
-void drawPhysicsPanel(engine::PhysicsWorld& physics)
+void drawPhysicsPanel(engine::PhysicsWorld& physics, bool& ragdollToggleRequested,
+    bool& ragdollSelfCollide, bool ragdollActive)
 {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2{viewport->WorkPos.x + 12.0F,
@@ -136,6 +138,16 @@ void drawPhysicsPanel(engine::PhysicsWorld& physics)
         if (ImGui::Button("Spawn sphere")) {
             physics.spawnBody({engine::PhysicsBodyDesc::Shape::Sphere, {-2.0F, 15.0F, 0.0F}, {1.0F, 0.0F, 0.0F}, 1.0F});
         }
+
+        ImGui::Separator();
+        ImGui::Text("avatar ragdoll: %s", ragdollActive ? "active" : "off");
+        if (ImGui::Button(ragdollActive ? "Restore animation" : "Make ragdoll")) {
+            ragdollToggleRequested = true; // applied in the next frame's update section
+        }
+        ImGui::Checkbox("limb self-collision (on next activation)", &ragdollSelfCollide);
+        ImGui::TextDisabled(ragdollSelfCollide
+                ? "non-adjacent parts collide; joint-linked stay filtered"
+                : "parts never collide with each other (smoothest)");
     }
     ImGui::End();
 }
@@ -417,6 +429,86 @@ bool testSceneGraph()
     return visibleInFront && !visibleBehind;
 }
 
+// Ragdoll check: seed the Bullet ragdoll from the animated avatar pose, let
+// it fall for 2 s of simulation and verify the bodies actually drop onto the
+// terrain while the palette round-trip (bodies -> node TRS -> skinning
+// matrices) keeps producing finite transforms. Runs twice — classic (linked
+// pairs filtered) and with self-collision — logging joint stretch / body
+// speed so the experiment is quantitative. Only non-finite blowups (or a
+// failed classic fall) fail the test. Headless: no GL needed.
+bool testRagdoll()
+{
+    namespace fs = std::filesystem;
+    const fs::path assetsDir{CANDY_ASSETS_DIR};
+
+    auto dragon = engine::Model::loadFromFile((assetsDir / "objects/dragon/ganfaul_m_aure.dae").generic_string());
+    if (!dragon) {
+        engine::Log::error("testRagdoll: dragon failed: {}", dragon.error().message);
+        return false;
+    }
+    if (auto loaded = dragon->loadAnimations((assetsDir / "objects/dragon/Idle.dae").generic_string()); !loaded) {
+        engine::Log::error("testRagdoll: Idle failed: {}", loaded.error().message);
+        return false;
+    }
+
+    // Same 1.8 m avatar fit as the game loop, spawned mid-air over the plain.
+    const engine::Aabb dragonAabb = engine::generateAabb(*dragon);
+    const float dragonScale = 1.8F / glm::max(2.0F * dragonAabb.halfExtents.y, 1e-3F);
+    const glm::mat4 modelToWorld = glm::translate(glm::mat4{1.0F}, glm::vec3{0.0F, 2.5F, 0.0F})
+        * glm::scale(glm::mat4{1.0F}, glm::vec3{dragonScale});
+
+    engine::PhysicsWorld physics;
+    const engine::Terrain terrain = engine::Terrain::makePlainWithRamp();
+    physics.addStaticTerrain(terrain);
+
+    bool ok = true;
+    for (const bool selfCollide : {false, true}) {
+        // Fresh animator per phase so the previous phase's override pose does
+        // not leak into the next seed; the seed pose is the same Idle frame.
+        engine::Animator animator{*dragon};
+        animator.play(0);
+        animator.update(1.0F / 60.0F); // seed pose for the ragdoll
+
+        engine::Ragdoll ragdoll(physics, animator, modelToWorld, selfCollide);
+        if (!ragdoll.valid() || ragdoll.bodyCount() != 15) {
+            engine::Log::error("testRagdoll: build failed (self={}, valid={}, bodies={})",
+                selfCollide, ragdoll.valid(), ragdoll.bodyCount());
+            return false;
+        }
+
+        const float hipsStart = ragdoll.hipsPosition().y;
+        float worstStretch = 0.0F;
+        bool finite = true;
+        for (int step = 0; step < 120; ++step) {
+            physics.step(1.0F / 60.0F);
+            ragdoll.update();
+            worstStretch = glm::max(worstStretch, ragdoll.maxJointStretch());
+            const glm::vec3 hips = ragdoll.hipsPosition();
+            finite = finite && std::isfinite(hips.x) && std::isfinite(hips.y) && std::isfinite(hips.z);
+        }
+        const float hipsEnd = ragdoll.hipsPosition().y;
+
+        engine::Log::info("testRagdoll: self={} hips {:.2f} -> {:.2f}, jointStretch end={:.4f} "
+            "worst={:.4f}, maxSpeed={:.2f}, finite={}",
+            selfCollide, hipsStart, hipsEnd, ragdoll.maxJointStretch(), worstStretch,
+            ragdoll.maxBodySpeed(), finite);
+        const std::vector<float> hinges = ragdoll.hingeAngles();
+        if (hinges.size() >= 4) {
+            // Knee flexion is positive (heel backwards), elbow flexion
+            // negative (hand forwards): an inverted sign here would mean the
+            // hinge axes point the wrong anatomical way.
+            engine::Log::info("testRagdoll: self={} knees {:+.2f}/{:+.2f} rad, "
+                "elbows {:+.2f}/{:+.2f} rad",
+                selfCollide, hinges[0], hinges[1], hinges[2], hinges[3]);
+        }
+
+        ok = ok && finite && (selfCollide || hipsStart - hipsEnd > 0.2F);
+        // The ragdoll destructs here: constraints then bodies detach cleanly
+        // (the second phase reuses the same world over the same terrain).
+    }
+    return ok;
+}
+
 // M2 check: full GL pipeline render + screenshot dump for manual verification.
 bool testRenderer(engine::Window& window);
 bool continueRendererTest(engine::Window& window, engine::GlRenderer& renderer,
@@ -609,7 +701,8 @@ int main(int argc, char* argv[]) try
     engine::Log::info("starting (selftest: {})", selftest);
 
     if (selftest) {
-        const bool ok = testAssets() && testAnimation() && testPhysics() && testPlayer() && testSceneGraph();
+        const bool ok = testAssets() && testAnimation() && testPhysics() && testPlayer()
+            && testSceneGraph() && testRagdoll();
         if (!ok) {
             engine::Log::error("selftest failed");
             return 1;
@@ -652,7 +745,19 @@ int main(int argc, char* argv[]) try
     std::optional<engine::Animator> dragonAnimator;
     std::optional<engine::PhysicsWorld> physics;
     std::optional<engine::PlayerController> player;
+    std::optional<engine::Ragdoll> dragonRagdoll; // skeleton ragdoll over the avatar
     engine::Camera camera;
+
+    // Ragdoll toggle (Physics panel button) + the avatar transform frozen at
+    // activation: the ragdoll seeds from it and must not spin with camera
+    // orbiting afterwards.
+    bool ragdollToggleRequested = false;
+    // Real self-collision: non-adjacent parts collide (hands can rest on the
+    // chest) while joint-linked capsules stay filtered — measured smoothest
+    // and most lifelike; the joints never fight their own contacts.
+    bool ragdollSelfCollide = true;
+    glm::mat4 dragonRagdollTransform{1.0F};
+    glm::mat4 dragonTransform{1.0F};
 
     uint32_t terrainMesh = 0;
     std::array<uint32_t, 5> terrainTextures{};
@@ -786,6 +891,29 @@ int main(int argc, char* argv[]) try
         clock.beginFrame();
         const float deltaSeconds = clock.deltaTime();
 
+        // Physics-panel ragdoll toggle (deferred from the previous frame's UI
+        // pass). Activation seeds the ragdoll from the current animated pose
+        // at the current avatar transform and parks the player capsule's
+        // controller — its action would keep stepping the capsule, and its
+        // ghost overlaps the freshly seeded bodies. Restore tears the ragdoll
+        // down (the destructor detaches bodies + joints) and hands the
+        // palette back to the clips.
+        if (ragdollToggleRequested) {
+            ragdollToggleRequested = false;
+            if (dragonRagdoll) {
+                dragonRagdoll.reset();
+                if (player) {
+                    player->setEnabled(true);
+                }
+            } else if (dragonAnimator && physics) {
+                dragonRagdoll.emplace(*physics, *dragonAnimator, dragonTransform, ragdollSelfCollide);
+                dragonRagdollTransform = dragonTransform;
+                if (player) {
+                    player->setEnabled(false);
+                }
+            }
+        }
+
         // Camera: mouse orbit + wheel zoom (2017-style free orbit).
         {
             // WantCaptureMouse here lags one frame (read before ImGui's
@@ -802,8 +930,12 @@ int main(int argc, char* argv[]) try
 
         bool playerMoving = false;
         if (player && physics) {
-            player->update(input, deltaSeconds, camera.forward(), camera.right());
-            physics->step(deltaSeconds);
+            if (!dragonRagdoll) {
+                // While the ragdoll owns the avatar the capsule stays parked
+                // (its action is removed; input must not queue movement).
+                player->update(input, deltaSeconds, camera.forward(), camera.right());
+            }
+            physics->step(deltaSeconds); // the ragdoll bodies keep simulating
             playerMoving = input.isDown(GLFW_KEY_W) || input.isDown(GLFW_KEY_S)
                 || input.isDown(GLFW_KEY_A) || input.isDown(GLFW_KEY_D);
 
@@ -824,11 +956,17 @@ int main(int argc, char* argv[]) try
             }
         }
 
-        if (player) {
+        if (dragonRagdoll) {
+            camera.target = dragonRagdoll->hipsPosition(); // follow the falling body
+        } else if (player) {
             camera.target = player->position(); // capsule center ≈ chest height
         }
 
-        if (dragonAnimator) {
+        if (dragonRagdoll) {
+            // Ragdoll owns the pose: read the simulated bodies back into the
+            // animator (same composePalette path the clips use).
+            dragonRagdoll->update();
+        } else if (dragonAnimator) {
             // Walk when the player moves, idle otherwise (smooth cross-fade).
             dragonAnimator->crossFadeTo(playerMoving ? 2 : 1);
             dragonAnimator->update(deltaSeconds);
@@ -850,9 +988,15 @@ int main(int argc, char* argv[]) try
         }
         const glm::mat4 dragonFitFrame = glm::scale(glm::mat4{1.0F}, glm::vec3{dragonScale})
             * glm::translate(glm::mat4{1.0F}, glm::vec3{-dragonCenter.x, -dragonAnchorY, -dragonCenter.z});
-        const glm::mat4 dragonTransform = glm::translate(glm::mat4{1.0F}, dragonPosition)
+        dragonTransform = glm::translate(glm::mat4{1.0F}, dragonPosition)
             * glm::rotate(glm::mat4{1.0F}, glm::radians(camera.yaw + 180.0F), glm::vec3{0.0F, 1.0F, 0.0F})
             * dragonFitFrame;
+        if (dragonRagdoll) {
+            // Frozen at activation (persistent, declared above): the ragdoll
+            // seeded from this exact transform and must not rotate with the
+            // camera orbit afterwards.
+            dragonTransform = dragonRagdollTransform;
+        }
 
         const auto [framebufferWidth, framebufferHeight] = window.framebufferSize();
         renderer.resize(framebufferWidth, framebufferHeight);
@@ -922,7 +1066,8 @@ int main(int argc, char* argv[]) try
                 drawAnimationPanel(*dragonAnimator);
             }
             if (physics) {
-                drawPhysicsPanel(*physics);
+                drawPhysicsPanel(*physics, ragdollToggleRequested, ragdollSelfCollide,
+                    dragonRagdoll.has_value());
             }
             if (showDemo) {
                 ImGui::ShowDemoWindow(&showDemo);
