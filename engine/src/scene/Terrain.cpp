@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <format>
+#include <limits>
 
 #include "engine/assets/Image.hpp"
 
@@ -35,6 +36,44 @@ std::expected<Terrain, AssetError> Terrain::loadFromHeightmap(
         terrain.m_heights[i] = minHeight + normalized * (maxHeight - minHeight);
     }
 
+    return terrain;
+}
+
+Terrain Terrain::makePlainWithRamp(size_t resolution, float worldSize, float plateauHeight,
+    float rampStartZ, float rampEndZ)
+{
+    Terrain terrain;
+    terrain.m_resolution = resolution;
+    terrain.m_worldSize = worldSize;
+    terrain.m_sourcePath = "<procedural: plain with ramp>";
+
+    const float step = worldSize / static_cast<float>(resolution - 1);
+    const float half = worldSize / 2.0F;
+    terrain.m_heights.resize(resolution * resolution);
+
+    // Flat plain for z > rampStartZ, one linear ramp up to the plateau. The
+    // heights are exact (no image quantization), so heightAt(), the rendered
+    // mesh and the physics heightfield agree to the last bit.
+    float minH = std::numeric_limits<float>::max();
+    float maxH = std::numeric_limits<float>::lowest();
+    for (size_t iz = 0; iz < resolution; ++iz) {
+        const float z = static_cast<float>(iz) * step - half;
+        float height = 0.0F; // plain
+        if (z <= rampEndZ) {
+            height = plateauHeight; // far plateau
+        } else if (z < rampStartZ) {
+            const float t = (rampStartZ - z) / (rampStartZ - rampEndZ);
+            height = plateauHeight * t; // ramp, 0 -> plateauHeight
+        }
+        minH = std::min(minH, height);
+        maxH = std::max(maxH, height);
+        for (size_t ix = 0; ix < resolution; ++ix) {
+            terrain.m_heights[iz * resolution + ix] = height;
+        }
+    }
+    // Real data bounds: the physics heightfield body centers on (min+max)/2.
+    terrain.m_minHeight = minH;
+    terrain.m_maxHeight = maxH;
     return terrain;
 }
 
@@ -74,6 +113,30 @@ glm::vec3 Terrain::normalAt(float x, float z) const
     const float heightD = heightAt(x, z - step);
     const float heightU = heightAt(x, z + step);
     return glm::normalize(glm::vec3{heightL - heightR, 2.0F * step, heightD - heightU});
+}
+
+glm::vec3 Terrain::findScenicSpot() const
+{
+    const size_t low = m_resolution / 4;
+    const size_t high = m_resolution * 3 / 4;
+    size_t bestX = m_resolution / 2;
+    size_t bestZ = m_resolution / 2;
+    float bestHeight = -std::numeric_limits<float>::max();
+
+    for (size_t ix = low; ix < high; ++ix) {
+        for (size_t iz = low; iz < high; ++iz) {
+            const float height = m_heights[iz * m_resolution + ix];
+            if (height > bestHeight) {
+                bestHeight = height;
+                bestX = ix;
+                bestZ = iz;
+            }
+        }
+    }
+
+    const float step = m_worldSize / static_cast<float>(m_resolution - 1);
+    const float half = m_worldSize / 2.0F;
+    return {static_cast<float>(bestX) * step - half, bestHeight, static_cast<float>(bestZ) * step - half};
 }
 
 } // namespace engine

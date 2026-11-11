@@ -46,6 +46,13 @@ public:
     [[nodiscard]] float currentTime() const { return m_time; }
     [[nodiscard]] float normalizedTime() const;
 
+    // Lowest vertex Y of the model skinned by the given clip (model/render
+    // space), sampled across the whole clip. Walk cycles dip the feet BELOW
+    // the bind-pose AABB bottom, so renderers anchor avatars by this value to
+    // keep the planted foot exactly on the ground. Uses CPU skinning with the
+    // same palette math as the GPU and does not disturb the live pose.
+    [[nodiscard]] float clipLowestPoint(size_t clipIndex, int samples = 24) const;
+
 private:
     // Flattened model node tree: parents always precede children.
     struct FlatNode {

@@ -1,0 +1,5 @@
+layout(std140, binding = 5) uniform ShadowBlock
+{
+    mat4 lightViewProjection;
+    vec4 params;
+} shadow;

@@ -1,6 +1,9 @@
 #include "engine/physics/PhysicsWorld.hpp"
 
+#include <BulletCollision/CollisionShapes/btBoxShape.h>
+#include <BulletCollision/CollisionShapes/btCylinderShape.h>
 #include <BulletCollision/CollisionShapes/btHeightfieldTerrainShape.h>
+#include <BulletCollision/CollisionShapes/btSphereShape.h>
 #include <glm/gtc/type_ptr.hpp>
 
 #include "engine/core/Log.hpp"
@@ -16,6 +19,12 @@ PhysicsWorld::PhysicsWorld()
     , m_world(std::make_unique<btDiscreteDynamicsWorld>(&m_dispatcher, &m_broadphase, &m_solver, &m_collisionConfig))
 {
     m_world->setGravity(btVector3(0.0F, -9.81F, 0.0F));
+    // Required for every btPairCachingGhostObject (the kinematic character):
+    // the pair cache only notifies ghosts about overlaps through this
+    // callback. Without it the ghost's overlapping list stays empty and
+    // btKinematicCharacterController's sweeps never hit anything (infinite
+    // fall). Same call as in Bullet's CharacterDemo.
+    m_broadphase.getOverlappingPairCache()->setInternalGhostPairCallback(&m_ghostPairCallback);
     Log::info("physics world initialized (Bullet 3.25)");
 }
 
@@ -105,9 +114,27 @@ btRigidBody* PhysicsWorld::spawnBody(const PhysicsBodyDesc& desc)
     btRigidBody::btRigidBodyConstructionInfo info(desc.mass, motionState.get(), shape.get(), localInertia);
     auto body = std::make_unique<btRigidBody>(info);
     body->setLinearVelocity(btVector3(desc.initialVelocity.x, desc.initialVelocity.y, desc.initialVelocity.z));
-    body->setFriction(0.7F);
-    body->setRestitution(0.3F);
     body->setUserIndex(static_cast<int>(desc.shape)); // shape kind for snapshot grouping
+
+    // Contact feel per shape. Round bodies (sphere/cylinder) "flexed" forever:
+    // restitution 0.3 kept micro-bouncing them off the bumpy heightfield, and
+    // Bullet has no rolling friction, so a spinning ball or a tipped cylinder
+    // rolled on indefinitely. Rough them up instead: friction 1.0 (the terrain
+    // collider also uses 1.0 and Bullet combines friction multiplicatively, so
+    // contacts run at full grip), almost no bounce, and angular damping as
+    // the rolling resistance Bullet itself lacks.
+    switch (desc.shape) {
+    case PhysicsBodyDesc::Shape::Sphere:
+    case PhysicsBodyDesc::Shape::Cylinder:
+        body->setFriction(1.0F);
+        body->setRestitution(0.05F);
+        body->setDamping(0.0F, 0.5F); // (linear, angular) angular = rolling resistance
+        break;
+    case PhysicsBodyDesc::Shape::Box:
+        body->setFriction(0.7F);
+        body->setRestitution(0.3F);
+        break;
+    }
 
     btRigidBody* raw = body.get();
     m_world->addRigidBody(raw);
@@ -121,8 +148,7 @@ btRigidBody* PhysicsWorld::spawnBody(const PhysicsBodyDesc& desc)
 void PhysicsWorld::step(float deltaSeconds)
 {
     constexpr int maxSubSteps = 5;
-    constexpr btScalar fixedTimeStep = btScalar(1.0) / btScalar(120.0);
-    m_world->stepSimulation(btScalar(deltaSeconds), maxSubSteps, fixedTimeStep);
+    m_world->stepSimulation(btScalar(deltaSeconds), maxSubSteps, btScalar(fixedStepTime()));
 }
 
 std::vector<PhysicsWorld::BodySnapshot> PhysicsWorld::snapshots() const
@@ -143,6 +169,26 @@ std::vector<PhysicsWorld::BodySnapshot> PhysicsWorld::snapshots() const
         snapshot.position = {origin.x(), origin.y(), origin.z()};
         const btQuaternion& rotation = transform.getRotation();
         snapshot.rotation = {rotation.x(), rotation.y(), rotation.z(), rotation.w()};
+
+        // Collider dimensions, read back from the live shape so the snapshot
+        // cannot lie about them. getHalfExtentsWithMargin() reconstructs the
+        // constructor's half-extents (Bullet embeds the collision margin
+        // inside them), so this is exactly what the collider occupies.
+        const btCollisionShape* collider = body->getCollisionShape();
+        switch (snapshot.shape) {
+        case PhysicsBodyDesc::Shape::Sphere:
+            snapshot.extents = {
+                static_cast<const btSphereShape*>(collider)->getRadius(), 0.0F, 0.0F};
+            break;
+        case PhysicsBodyDesc::Shape::Box:
+        case PhysicsBodyDesc::Shape::Cylinder: {
+            const btVector3 half = snapshot.shape == PhysicsBodyDesc::Shape::Box
+                ? static_cast<const btBoxShape*>(collider)->getHalfExtentsWithMargin()
+                : static_cast<const btCylinderShape*>(collider)->getHalfExtentsWithMargin();
+            snapshot.extents = {half.x(), half.y(), half.z()};
+            break;
+        }
+        }
         out.push_back(snapshot);
     }
     return out;

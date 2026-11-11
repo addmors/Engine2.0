@@ -1,0 +1,6 @@
+layout(std140, binding = 3) uniform LightBlock
+{
+    vec4 sunDirection; // xyz, normalized, pointing FROM the sun
+    vec4 sunColor;     // rgb * intensity
+    vec4 ambient;      // rgb
+} light;

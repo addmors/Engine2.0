@@ -1,0 +1,4 @@
+layout(std140, binding = 2) uniform BonesBlock
+{
+    mat4 palette[128];
+} bones;

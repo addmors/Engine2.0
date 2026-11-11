@@ -66,9 +66,12 @@ std::expected<Model, AssetError> Model::loadFromFile(std::string_view path)
     }
 
     Assimp::Importer importer;
+    // Flag set mirrors the working 2017 loader: notably WITHOUT
+    // JoinIdenticalVertices/LimitBoneWeights — with those, assimp 6.0.6 breaks
+    // COLLADA weight->vertex references and limbs turn into rubber.
     const aiScene* scene = importer.ReadFile(std::string{path},
         aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_CalcTangentSpace
-            | aiProcess_GenSmoothNormals | aiProcess_JoinIdenticalVertices | aiProcess_LimitBoneWeights);
+            | aiProcess_GenSmoothNormals | aiProcess_GenBoundingBoxes);
 
     if (scene == nullptr || (scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE) != 0 || scene->mRootNode == nullptr) {
         return std::unexpected(AssetError{AssetError::Kind::ParseFailed,

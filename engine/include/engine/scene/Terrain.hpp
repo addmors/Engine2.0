@@ -24,8 +24,19 @@ public:
     [[nodiscard]] static std::expected<Terrain, AssetError> loadFromHeightmap(
         std::string_view path, float worldSize = 512.0F, float minHeight = -40.0F, float maxHeight = 40.0F);
 
+    // Procedural test level: a perfectly flat plain (y = 0) with one long ramp
+    // up to a plateau along -Z. No assets and no heightmap quantization — the
+    // exact heights make character grounding verifiable numerically (see the
+    // app's testPlayer / testPhysics and the game scene).
+    [[nodiscard]] static Terrain makePlainWithRamp(size_t resolution = 256, float worldSize = 512.0F,
+        float plateauHeight = 25.0F, float rampStartZ = -60.0F, float rampEndZ = -200.0F);
+
     [[nodiscard]] float heightAt(float x, float z) const;      // bilinear sampling
     [[nodiscard]] glm::vec3 normalAt(float x, float z) const;  // central differences
+
+    // World position of the highest grid point within the central quarter of
+    // the map — a scenic spawn vantage (used by the demo scene).
+    [[nodiscard]] glm::vec3 findScenicSpot() const;
 
     [[nodiscard]] float worldSize() const { return m_worldSize; }
     [[nodiscard]] float minHeight() const { return m_minHeight; }
@@ -34,10 +45,12 @@ public:
 
     [[nodiscard]] std::span<const float> heights() const { return m_heights; }
 
-    // 2D view over the height grid: heights2d()[ix, iz].
-    [[nodiscard]] auto heights2d() const
+    // 2D view over the height grid: heights2d()[ix, iz] (x is the fast axis,
+    // matching both our linear sampling and bullet's heightfield layout).
+    using HeightGrid = std::mdspan<const float, std::dextents<size_t, 2>, std::layout_left>;
+    [[nodiscard]] HeightGrid heights2d() const
     {
-        return std::mdspan{m_heights.data(), m_resolution, m_resolution};
+        return HeightGrid{m_heights.data(), m_resolution, m_resolution};
     }
 
 private:

@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <limits>
 #include <utility>
+
+#include "engine/core/Log.hpp"
 
 namespace engine {
 
@@ -96,6 +99,22 @@ Animator::Animator(const Model& model)
 
     m_currentPose.nodeTransforms.resize(m_nodes.size());
     m_fadePose.nodeTransforms.resize(m_nodes.size());
+
+    // Selfcheck: with every node at its static (bind) transform, the palette
+    // must come out close to identity — otherwise the offset-matrix space
+    // disagrees with the node hierarchy.
+    Pose bindPose;
+    bindPose.nodeTransforms.resize(m_nodes.size());
+    for (size_t i = 0; i < m_nodes.size(); ++i) {
+        bindPose.nodeTransforms[i] = m_nodes[i].staticTransform;
+    }
+    composePalette(bindPose);
+
+    // NOTE: assimp offset matrices are kept as-is — they are consistent with
+    // the vertex space (both in the skin's original units), which the
+    // VERDICT probe confirmed. Only the node hierarchy got the unit scale,
+    // and that is compensated inside composePalette().
+    composePalette(bindPose); // informational re-run
 }
 
 void Animator::flattenTree()
@@ -223,6 +242,17 @@ void Animator::blendPoses(const Pose& from, const Pose& to, float blendFactor, P
 
 void Animator::composePalette(const Pose& pose)
 {
+    // COLLADA unit-scale compensation (assimp 6.0.6). Assimp wraps the node
+    // hierarchy in a root scale(0.01) node: g_m = S(0.01) * g_legacy, where
+    // g_legacy is the global pose in the rig's native centimeter space — the
+    // same space the vertices and the skin's offset matrices live in (Maya
+    // COLLADA rigs carry a 100-scale root, so offsets contain 0.01 factors in
+    // their linear part). Undo the wrap entirely:
+    // palette = g_legacy * offset = S(100) * g_m * offset.
+    // NOTE: no right-hand S(0.01) — that would leave a 0.01 factor inside the
+    // offset's linear part and collapse the whole model to a speck.
+    static const glm::mat4 toCentimeters = glm::scale(glm::mat4{1.0F}, glm::vec3{100.0F});
+
     m_globals.resize(m_nodes.size(), glm::mat4{1.0F});
     for (size_t i = 0; i < m_nodes.size(); ++i) {
         const FlatNode& node = m_nodes[i];
@@ -232,9 +262,73 @@ void Animator::composePalette(const Pose& pose)
 
         if (node.boneId >= 0) {
             m_palette[static_cast<size_t>(node.boneId)]
-                = m_globals[i] * m_inverseBind[static_cast<size_t>(node.boneId)];
+                = toCentimeters * m_globals[i] * m_inverseBind[static_cast<size_t>(node.boneId)];
         }
     }
+}
+
+float Animator::clipLowestPoint(size_t clipIndex, int samples) const
+{
+    const auto& animations = m_model.animations();
+    if (clipIndex >= animations.size() || samples < 1) {
+        return 0.0F;
+    }
+    const Animation& clip = animations[clipIndex];
+
+    // Local channel map: the live maps exist only for the current/fading clips.
+    std::unordered_map<std::string, size_t> channels;
+    channels.reserve(clip.channels.size());
+    for (size_t c = 0; c < clip.channels.size(); ++c) {
+        channels.emplace(clip.channels[c].boneName, c);
+    }
+
+    // Scratch pose/palette — same composition as composePalette (including the
+    // COLLADA unit-scale compensation) so the CPU skinning matches the GPU.
+    static const glm::mat4 toCentimeters = glm::scale(glm::mat4{1.0F}, glm::vec3{100.0F});
+    Pose pose;
+    pose.nodeTransforms.resize(m_nodes.size());
+    std::vector<glm::mat4> globals(m_nodes.size(), glm::mat4{1.0F});
+    std::vector<glm::mat4> palette(static_cast<size_t>(m_model.boneCount()), glm::mat4{1.0F});
+
+    const float seconds = clip.duration / (clip.ticksPerSecond > 0.0F ? clip.ticksPerSecond : 25.0F);
+    float lowest = std::numeric_limits<float>::max();
+    for (int s = 0; s < samples; ++s) {
+        samplePose(clip, channels, seconds * static_cast<float>(s) / static_cast<float>(samples), pose);
+
+        for (size_t i = 0; i < m_nodes.size(); ++i) {
+            const FlatNode& node = m_nodes[i];
+            const glm::mat4 parent = node.parentIndex >= 0
+                ? globals[static_cast<size_t>(node.parentIndex)]
+                : glm::mat4{1.0F};
+            globals[i] = parent * composeTrs(pose.nodeTransforms[i]);
+            if (node.boneId >= 0) {
+                palette[static_cast<size_t>(node.boneId)]
+                    = toCentimeters * globals[i] * m_inverseBind[static_cast<size_t>(node.boneId)];
+            }
+        }
+
+        // CPU skinning, formula identical to skinned.vert (weight-summed
+        // palette matrix applied to the bind-pose position).
+        for (const auto& mesh : m_model.meshes()) {
+            for (const auto& vertex : mesh.vertices) {
+                if (vertex.boneWeights[0] == 0.0F && vertex.boneWeights[1] == 0.0F
+                    && vertex.boneWeights[2] == 0.0F && vertex.boneWeights[3] == 0.0F) {
+                    lowest = std::min(lowest, vertex.position.y); // unskinned: bind pose
+                    continue;
+                }
+                glm::vec4 skinned{0.0F};
+                for (int w = 0; w < 4; ++w) {
+                    if (vertex.boneIds[w] >= 0 && vertex.boneWeights[w] > 0.0F) {
+                        skinned += vertex.boneWeights[w]
+                            * (palette[static_cast<size_t>(vertex.boneIds[w])]
+                                * glm::vec4{vertex.position, 1.0F});
+                    }
+                }
+                lowest = std::min(lowest, skinned.y);
+            }
+        }
+    }
+    return lowest == std::numeric_limits<float>::max() ? 0.0F : lowest;
 }
 
 float Animator::normalizedTime() const

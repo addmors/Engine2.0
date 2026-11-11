@@ -1,0 +1,6 @@
+layout(std140, binding = 0) uniform CameraBlock
+{
+    mat4 view;
+    mat4 projection;
+    vec4 position; // xyz = camera position, w unused
+} camera;
